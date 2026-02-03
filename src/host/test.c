@@ -314,7 +314,20 @@ static void test_mat_mul_rpc(remote_handle64 handle) {
     }
   }
 
-  htp_ops_mat_mul_permuted_w16a32(handle, output_fd, 0, activation_fd, 0, weight_fd, 0, m, k, n);
+  printf("=== Before RPC call ===\n");
+  printf("activation[0..3]: %g %g %g %g\n", 
+         activation[0], activation[1], activation[2], activation[3]);
+  
+  uint16_t *w16 = (uint16_t*)weight;
+  printf("weight[0..3] (hex): %04x %04x %04x %04x\n", 
+         w16[0], w16[1], w16[2], w16[3]);
+
+  int ret = htp_ops_mat_mul_permuted_w16a32(handle, output_fd, 0, activation_fd, 0, weight_fd, 0, m, k, n);
+
+  printf("=== RPC returned: %d ===\n", ret);
+  
+  printf("output[0..3]: %g %g %g %g\n", 
+         output[0], output[1], output[2], output[3]);
 
   for (int i = 0; i < m; ++i) {
     for (int j = 0; j < n; ++j) {
@@ -340,15 +353,19 @@ static void test_mat_mul_rpc(remote_handle64 handle) {
 }
 
 int main(int argc, char **argv) {
+  printf("Opening DSP session...\n");
   int err = open_dsp_session(CDSP_DOMAIN_ID, 1);
   if (err != 0) {
-    fprintf(stderr, "Open DSP session failed\n");
+    fprintf(stderr, "Open DSP session failed: %d\n", err);
     return 1;
   }
+  printf("DSP session opened\n");
 
+  printf("Initializing HTP backend...\n");
   init_htp_backend();
+  printf("HTP backend initialized\n");
 
-  // test_mat_mul_rpc(get_global_handle());
+  test_mat_mul_rpc(get_global_handle());
 
   htp_ops_test_ops(get_global_handle());
 

@@ -4,19 +4,23 @@
 #include <HAP_compute_res.h>
 #include <HAP_farf.h>
 
-static int hmx_mgr_ctx_id;
+// static int hmx_mgr_ctx_id;
+int hmx_mgr_ctx_id; 
 static int hmx_mgr_spin_lock;
 
 worker_pool_context_t hmx_worker_pool_ctx; 
 
 void hmx_manager_setup() {
   // NOTE(hzx): HMX should be already powered up in power_setup()
+  FARF(ALWAYS, "=== hmx_manager_setup called ===");
 
   compute_res_attr_t req;
   HAP_compute_res_attr_init(&req);
   HAP_compute_res_attr_set_hmx_param(&req, 1);
 
-  hmx_mgr_ctx_id = HAP_compute_res_acquire(&req, 10000);  // 10ms timeout
+  hmx_mgr_ctx_id = HAP_compute_res_acquire(&req, 10000);
+  FARF(ALWAYS, "HAP_compute_res_acquire returned ctx_id = %d", hmx_mgr_ctx_id);
+  
   if (hmx_mgr_ctx_id == 0) {
     FARF(ALWAYS, "%s: HAP_compute_res_acquire failed", __func__);
     return;

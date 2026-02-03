@@ -283,11 +283,11 @@ void internal_op_tests();
 void internal_op_tests() {
   using namespace internal;
 
-  // test_int16_fp16_conversion();
-  // test_fp16_exp2();
+  test_int16_fp16_conversion();
+  test_fp16_exp2();
 
-  // benchmark_hmx_gemm();
-  // benchmark_hvx_gemm();
-  // benchmark_vtcm_bandwidth();
+  benchmark_hmx_gemm();
+  benchmark_hvx_gemm();
+  benchmark_vtcm_bandwidth();
 }
 }

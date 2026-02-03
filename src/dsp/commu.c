@@ -320,6 +320,10 @@ bail:
 AEEResult htp_ops_mat_mul_permuted_w16a32(remote_handle64 handle, int32 output_fd, int32 output_offset,
                                           int32 activation_fd, int32 activation_offset, int32 weight_fd,
                                           int32 weight_offset, int32 m, int32 k, int32 n) {
+
+  extern int hmx_mgr_ctx_id;
+  FARF(ALWAYS, "mat_mul: hmx_mgr_ctx_id = %d", hmx_mgr_ctx_id);
+  
   uint8_t *p0, *p1, *p2;
   p0 = p1 = p2 = NULL;
 
@@ -352,22 +356,22 @@ AEEResult htp_ops_mat_mul_permuted_w16a32(remote_handle64 handle, int32 output_f
   qurt_mem_cache_clean((qurt_addr_t) activation, activation_size, QURT_MEM_CACHE_INVALIDATE, QURT_MEM_DCACHE);
   qurt_mem_cache_clean((qurt_addr_t) weight, weight_size, QURT_MEM_CACHE_INVALIDATE, QURT_MEM_DCACHE);
 
-  // static char print_buf[256];
+  static char print_buf[256];
 
-  // const uint16_t *w = (const uint16_t *) weight;
-  // sprintf(print_buf, "%s: weight digest %04x %04x %04x %04x | %04x %04x", __func__, w[0], w[1], w[2], w[3], w[64], w[65]);
-  // FARF(ALWAYS, "%s", print_buf);
+  const uint16_t *w = (const uint16_t *) weight;
+  sprintf(print_buf, "%s: weight digest %04x %04x %04x %04x | %04x %04x", __func__, w[0], w[1], w[2], w[3], w[64], w[65]);
+  FARF(ALWAYS, "%s", print_buf);
 
-  // const float *a = activation;
-  // sprintf(print_buf, "%s: activa digest %g %g %g %g", __func__, a[0], a[1], a[2], a[3]);
-  // FARF(ALWAYS, "%s", print_buf);
+  const float *a = activation;
+  sprintf(print_buf, "%s: activa digest %g %g %g %g", __func__, a[0], a[1], a[2], a[3]);
+  FARF(ALWAYS, "%s", print_buf);
 
   hmx_manager_enable_execution();
   err = hmx_mat_mul_permuted_w16a32(output, activation, weight, m, k, n);
   hmx_manager_disable_execution();
 
-  // sprintf(print_buf, "%s: output digest %g %g %g %g", __func__, output[0], output[1], output[2], output[3]);
-  // FARF(ALWAYS, "%s", print_buf);
+  sprintf(print_buf, "%s: output digest %g %g %g %g", __func__, output[0], output[1], output[2], output[3]);
+  FARF(ALWAYS, "%s", print_buf);
 
   qurt_mem_cache_clean((qurt_addr_t) output, output_size, QURT_MEM_CACHE_FLUSH, QURT_MEM_DCACHE);
 

@@ -17,6 +17,8 @@
 #include "HAP_farf.h"
 #include "HAP_perf.h"
 
+#include <HAP_farf.h>
+
 #define WEIGHT_AREA_SIZE     (1 * 1024 * 1024)
 #define ACTIVATION_AREA_SIZE (1 * 1024 * 1024)
 #define OUTPUT_AREA_SIZE     (1 * 1024 * 1024)
@@ -182,15 +184,24 @@ static void transfer_permuted_weight_chunk_fp16(__fp16 *vtcm_dst, const __fp16 *
   // NOTE(hzx): weight matrix is already transposed. n_cols actually turns into n_rows
   assert(n_cols % HMX_FP16_TILE_N_COLS == 0);
 
-  const bool use_dma = true;
+  const bool use_dma = false;  // TODO(hongseung): enable DMA transfer after fixing related issues
+
+  FARF(ALWAYS, "transfer_weight: src=%p, dst=%p, n_cols=%d, k=%d", src, vtcm_dst, n_cols, k);
 
   if (use_dma) {
     size_t size = n_cols * k * sizeof(__fp16);
-
+    FARF(ALWAYS, "DMA transfer size=%d bytes", (int)size);
+    
     dma_desc_1d_t desc;
-    dma_issue_load_from_ddr(&desc, vtcm_dst, src, size);
+    int ret = dma_issue_load_from_ddr(&desc, vtcm_dst, src, size);
+    FARF(ALWAYS, "dma_issue_load_from_ddr returned %d", ret);
+    
     dma_wait_for_idle();
-
+    
+    // DMA 후 데이터 확인 여기서부터 출력이 안됨. 이유는 확인필요
+    FARF(ALWAYS, "After DMA: vtcm_dst[0..3] = %04x %04x %04x %04x",
+         ((uint16_t*)vtcm_dst)[0], ((uint16_t*)vtcm_dst)[1],
+         ((uint16_t*)vtcm_dst)[2], ((uint16_t*)vtcm_dst)[3]); 
     return;
   }
 
@@ -752,14 +763,30 @@ static void transfer_output_chunk_fp16_to_fp32(float *restrict dst, const __fp16
 
 int hmx_mat_mul_permuted_w16a32(float *restrict dst, const float *restrict activation,
                                 const __fp16 *restrict permuted_weight, int m, int k, int n) {
+  FARF(ALWAYS, "=== hmx_mat_mul_permuted_w16a32 START ===");
+  FARF(ALWAYS, "dst=%p, activation=%p, weight=%p", dst, activation, permuted_weight);
+  FARF(ALWAYS, "m=%d, k=%d, n=%d", m, k, n);
+  
   if (!dst || !activation || !permuted_weight || !m || !n || !k) {
+    FARF(ALWAYS, "ERROR: Invalid parameters!");
     return -1;
   }
   if (k % 32 != 0 || n % 32 != 0) {
-    // TODO(hzx): can we remove this restriction?
+    FARF(ALWAYS, "ERROR: k or n not multiple of 32!");
     return -1;
   }
   if (!is_aligned(dst, VLEN) || !is_aligned(activation, VLEN) || !is_aligned(permuted_weight, VLEN)) {
+    FARF(ALWAYS, "ERROR: Alignment issue! dst_align=%d, act_align=%d, w_align=%d",
+         is_aligned(dst, VLEN), is_aligned(activation, VLEN), is_aligned(permuted_weight, VLEN));
+    return -1;
+  }
+
+  // VTCM 할당
+  uint8_t *vtcm_ptr = (uint8_t *) vtcm_manager_get_vtcm_base();
+  FARF(ALWAYS, "vtcm_base = %p", vtcm_ptr);
+  
+  if (!vtcm_ptr) {
+    FARF(ALWAYS, "ERROR: VTCM allocation failed!");
     return -1;
   }
 
@@ -767,12 +794,13 @@ int hmx_mat_mul_permuted_w16a32(float *restrict dst, const float *restrict activ
   const size_t activation_area_size = ACTIVATION_AREA_SIZE;
   const size_t output_area_size     = OUTPUT_AREA_SIZE;
 
-  // VTCM layout: weight | activation | output | scales
-  uint8_t *vtcm_ptr        = (uint8_t *) vtcm_manager_get_vtcm_base();
-  __fp16  *vtcm_weight     = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, weight_area_size);
-  __fp16  *vtcm_activation = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, activation_area_size);
-  __fp16  *vtcm_output     = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, output_area_size);
+  __fp16  *vtcm_weight     = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, WEIGHT_AREA_SIZE);
+  __fp16  *vtcm_activation = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, ACTIVATION_AREA_SIZE);
+  __fp16  *vtcm_output     = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, OUTPUT_AREA_SIZE);
   __fp16  *vtcm_scales     = (__fp16 *) vtcm_seq_alloc(&vtcm_ptr, 256);
+
+  FARF(ALWAYS, "vtcm_weight=%p, vtcm_activation=%p, vtcm_output=%p, vtcm_scales=%p",
+       vtcm_weight, vtcm_activation, vtcm_output, vtcm_scales);
 
   hmx_init_column_scales(vtcm_scales, Q6_V_vsplat_R(0x3c00));  // fp16: 1.0
 
@@ -802,6 +830,11 @@ int hmx_mat_mul_permuted_w16a32(float *restrict dst, const float *restrict activ
     // activation_load_time += HAP_perf_get_qtimer_count() - act_t0;
 
     // FARF(ALWAYS, "transfer activation ok, mr = %d, n_rows = %d", mr, n_rows);
+    
+    // 디버그: VTCM에 activation이 제대로 복사되었는지 확인
+    FARF(ALWAYS, "vtcm_activation[0..3] = %04x %04x %04x %04x",
+        ((uint16_t*)vtcm_activation)[0], ((uint16_t*)vtcm_activation)[1],
+        ((uint16_t*)vtcm_activation)[2], ((uint16_t*)vtcm_activation)[3]);
 
     for (size_t nc = 0; nc < n; nc += n_chunk_n_cols) {
       size_t n_cols = smin(n - nc, n_chunk_n_cols);
@@ -815,11 +848,26 @@ int hmx_mat_mul_permuted_w16a32(float *restrict dst, const float *restrict activ
 
       // FARF(ALWAYS, "transfer weight ok, nc = %d, n_cols = %d", nc, n_cols);
 
+      // 디버그: VTCM에 weight가 제대로 복사되었는지 확인
+      FARF(ALWAYS, "vtcm_weight[0..3] = %04x %04x %04x %04x",
+          ((uint16_t*)vtcm_weight)[0], ((uint16_t*)vtcm_weight)[1],
+          ((uint16_t*)vtcm_weight)[2], ((uint16_t*)vtcm_weight)[3]);
+
       // int64_t core_t0 = HAP_perf_get_qtimer_count();
       {
         const int n_row_tiles = ceil_div(n_rows, HMX_FP16_TILE_N_ROWS);
         const int n_col_tiles = ceil_div(n_cols, HMX_FP16_TILE_N_COLS);
+
+        // core_dot_chunk_fp16 호출 전
+        FARF(ALWAYS, "Calling core_dot_chunk_fp16: n_row_tiles=%d, n_col_tiles=%d, n_dot_tiles=%d",
+            n_row_tiles, n_col_tiles, k / 32);
+
         core_dot_chunk_fp16(vtcm_output, vtcm_activation, vtcm_weight, vtcm_scales, n_row_tiles, n_col_tiles, k / 32);
+       
+        // core_dot_chunk_fp16 호출 후
+        FARF(ALWAYS, "After core_dot: vtcm_output[0..3] = %04x %04x %04x %04x",
+            ((uint16_t*)vtcm_output)[0], ((uint16_t*)vtcm_output)[1],
+            ((uint16_t*)vtcm_output)[2], ((uint16_t*)vtcm_output)[3]); 
       }
       // hmx_core_time += HAP_perf_get_qtimer_count() - core_t0;
 
@@ -846,6 +894,11 @@ int hmx_mat_mul_permuted_w16a32(float *restrict dst, const float *restrict activ
   // float  bandwidth   = 1e-3 * weight_size / HAP_perf_qtimer_count_to_us(weight_load_time);
   // FARF(ALWAYS, "    weight load bandwidth: %.2f GB/s", bandwidth);
 
+  FARF(ALWAYS, "After first iteration: vtcm_output[0..3] = %g %g %g %g",
+       (float)vtcm_output[0], (float)vtcm_output[1], 
+       (float)vtcm_output[2], (float)vtcm_output[3]);
+  
+  FARF(ALWAYS, "=== hmx_mat_mul_permuted_w16a32 END ===");
   return 0;
 }
 
