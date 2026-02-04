@@ -176,6 +176,50 @@ __attribute__((aligned(VLEN))) HVX_Vector vec;
 - Used for: GEMM, Flash Attention
 - Requires `-mhmx` compiler flag
 
+### FP16 Crouton Layout (Tile-Internal Memory Layout)
+
+HMX operates on 32×32 FP16 tiles in a specific memory layout called "Crouton". Within each tile:
+
+**Memory Layout Formula** (from `src/host/test.c:312`):
+```c
+offset = (row & ~1) * 32 + col * 2 + (row & 1)
+       = (row / 2) * 64 + col * 2 + (row % 2)
+```
+
+**Layout Structure**:
+- Rows are grouped in pairs: (row 0,1), (row 2,3), ..., (row 30,31)
+- For each row-pair, all 32 columns are stored sequentially
+- Within each column position, the two row values are adjacent
+
+```
+32×32 Tile Memory Layout:
+
+Row-pair 0 (rows 0-1), all columns:
+  offset 0-63:  [R0C0, R1C0, R0C1, R1C1, R0C2, R1C2, ..., R0C31, R1C31]
+
+Row-pair 1 (rows 2-3), all columns:
+  offset 64-127: [R2C0, R3C0, R2C1, R3C1, R2C2, R3C2, ..., R2C31, R3C31]
+
+...
+
+Row-pair 15 (rows 30-31), all columns:
+  offset 960-1023: [R30C0, R31C0, R30C1, R31C1, ..., R30C31, R31C31]
+```
+
+**Visual Representation**:
+```
+Memory:  [R0C0][R1C0][R0C1][R1C1]...[R0C31][R1C31][R2C0][R3C0]...
+              └──┬──┘      └──┬──┘
+           col 0 pair    col 1 pair
+         (rows 0,1)    (rows 0,1)
+```
+
+**Key Points**:
+- Total tile size: 1024 elements = 2048 bytes (32×32 FP16)
+- This layout enables efficient HMX hardware access patterns
+- Weight matrices must be pre-converted to Crouton layout before use
+- Activation data is converted to Crouton layout at runtime (FP32→FP16 + layout transform)
+
 **HVX (Hexagon Vector eXtension)**:
 - SIMD vector processor
 - 128-byte wide vectors
